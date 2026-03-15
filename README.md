@@ -8,7 +8,7 @@ Next.js 16 · TypeScript · Tailwind CSS 4 · Supabase · Bun · Vercel
 
 ## 里程碑
 
-### Phase 0: 项目基础设施 `进行中`
+### Phase 0: 项目基础设施 `已完成`
 
 搭建项目脚手架和 AI 协作基础设施。
 
@@ -18,7 +18,7 @@ Next.js 16 · TypeScript · Tailwind CSS 4 · Supabase · Bun · Vercel
 - [x] 编写 README.md（里程碑记录）
 - [x] 保存首次讨论记录
 
-### Phase 1: 官网重建（中文版） `待开始`
+### Phase 1: 官网重建（中文版） `进行中`
 
 重建 xs-code.com 中文版官网，参考苹果 UI 视觉设计风格。
 

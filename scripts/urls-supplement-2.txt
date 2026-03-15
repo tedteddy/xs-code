@@ -1,0 +1,36 @@
+# 第二批补充爬取 — Vue Router 发现的新路由
+# 新产品
+https://www.xs-code.com/#/goods/R90
+# 新联系页（真实联系页面）
+https://www.xs-code.com/#/contactUs
+# 真实政策页
+https://www.xs-code.com/#/privacy-policy
+https://www.xs-code.com/#/cookies-policy
+# R17 子页面
+https://www.xs-code.com/#/goods/R17/download
+https://www.xs-code.com/#/goods/R17/qa
+https://www.xs-code.com/#/goods/R17/similar
+# R90 子页面（仅 similar 有内容）
+https://www.xs-code.com/#/goods/R90/similar
+# 所有产品 QA 页
+https://www.xs-code.com/#/goods/R275A/qa
+https://www.xs-code.com/#/goods/R270A/qa
+https://www.xs-code.com/#/goods/R172E/qa
+https://www.xs-code.com/#/goods/R172S/qa
+https://www.xs-code.com/#/goods/RS100/qa
+https://www.xs-code.com/#/goods/RS200/qa
+https://www.xs-code.com/#/goods/RS60/qa
+https://www.xs-code.com/#/goods/H100/qa
+https://www.xs-code.com/#/goods/H920/qa
+https://www.xs-code.com/#/goods/H620/qa
+# 所有产品 Similar 页（R90 已在上面）
+https://www.xs-code.com/#/goods/R275A/similar
+https://www.xs-code.com/#/goods/R270A/similar
+https://www.xs-code.com/#/goods/R172E/similar
+https://www.xs-code.com/#/goods/R172S/similar
+https://www.xs-code.com/#/goods/RS100/similar
+https://www.xs-code.com/#/goods/RS200/similar
+https://www.xs-code.com/#/goods/RS60/similar
+https://www.xs-code.com/#/goods/H100/similar
+https://www.xs-code.com/#/goods/H920/similar
+https://www.xs-code.com/#/goods/H620/similar

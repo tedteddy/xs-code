@@ -28,7 +28,7 @@ const ROLE_GROUP: Record<AgentRole, string> = {
   pm: "product",
   ui: "product",
   frontend: "frontend",
-  cto: "frontend",
+  cto: "cto",
   qa: "qa",
 };
 

@@ -1,0 +1,11 @@
+{
+  "miniprogramRoot": "./",
+  "projectname": "xs-code-miniprogram",
+  "appid": "",
+  "setting": {
+    "es6": true,
+    "enhance": true,
+    "minified": true
+  },
+  "compileType": "miniprogram"
+}

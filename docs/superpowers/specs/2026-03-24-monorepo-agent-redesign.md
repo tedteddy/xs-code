@@ -54,7 +54,7 @@ xs-code/
 │   │       ├── content-map.md
 │   │       ├── urls-audit.md
 │   │       └── file-server-inventory.md
-│   ├── dev/                  # Frontend + CTO Agent（原 frontend + cto 两个角色）
+│   ├── frontend/             # Frontend + CTO Agent（原 frontend + cto 两个角色）
 │   │   ├── skills/           # frontend.md + cto.md 两个提示词文件分开保存
 │   │   └── workspace/        # CTO 评审日志等
 │   ├── qa/                   # QA Agent（原 qa 角色）
@@ -94,8 +94,8 @@ xs-code/
 |---|---|---|
 | `pm` | `agents/product/skills/` | `pm.md` |
 | `ui` | `agents/product/skills/` | `ui.md` |
-| `frontend` | `agents/dev/skills/` | `frontend.md` |
-| `cto` | `agents/dev/skills/` | `cto.md` |
+| `frontend` | `agents/frontend/skills/` | `frontend.md` |
+| `cto` | `agents/frontend/skills/` | `cto.md` |
 | `qa` | `agents/qa/skills/` | `qa.md` |
 
 ---
@@ -176,23 +176,23 @@ Claude Code（Team Lead）
     │       └── 完成 → 通知 Team Lead
     ├── 派发 CTO Agent → 评审 PRD（只读 workspace/ 和 apps/website/）
     │       └── 通过 → 继续 / 打回 → Product Agent 修改
-    ├── 派发 Dev Agent → 写代码到 apps/website/
+    ├── 派发 Frontend Agent → 写代码到 apps/website/
     │   （同时并行）
     └── 派发 QA Agent → 写 Playwright 测试到 agents/qa/tests/
             │
-            └── Team Lead 收到 Dev Agent "完成"通知后
+            └── Team Lead 收到 Frontend Agent "完成"通知后
                 → 发送消息给 QA Agent 触发测试执行
                 → QA 测试完成 → 报告给 Team Lead → 报告给 Jason
 ```
 
-**QA 时序协调**：由 Team Lead 负责。Dev Agent 完成后向 Team Lead 发送完成消息，Team Lead 再通知 QA Agent 执行测试。QA Agent 不轮询，等待指令。
+**QA 时序协调**：由 Team Lead 负责。Frontend Agent 完成后向 Team Lead 发送完成消息，Team Lead 再通知 QA Agent 执行测试。QA Agent 不轮询，等待指令。
 
 ### Sandbank 隔离边界
 
 | Agent | 读权限 | 写权限 |
 |-------|--------|--------|
 | Product (pm/ui) | `agents/product/workspace/` | `agents/product/workspace/`（PRD）+ `apps/website/src/i18n/`（i18n 文件） |
-| Dev (frontend) | `agents/product/workspace/`（PRD）+ `apps/website/` | `apps/website/` |
+| Frontend (frontend) | `agents/product/workspace/`（PRD）+ `apps/website/` | `apps/website/` |
 | QA | `apps/website/`（代码） | `agents/qa/tests/` |
 | CTO | `agents/product/workspace/` + `apps/website/`（只读审查范围） | `docs/decisions/`（评审记录） |
 

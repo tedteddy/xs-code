@@ -13,6 +13,7 @@
 import { spawn } from "child_process";
 import { appendFileSync, mkdirSync } from "fs";
 import { preflightAgent, runAgentInSandbox } from "./lib/sandbox";
+import { initDb9, recordRun } from "./lib/db9";
 
 const USE_SANDBOX = process.env.USE_SANDBOX === "1";
 
@@ -73,28 +74,11 @@ async function preflightAll(): Promise<void> {
 
 // ── runAgent ──────────────────────────────────────────────────────────────────
 
-async function runAgent(opts: {
+async function runAgentOnHost(opts: {
   role: FallbackRole;
   task: string;
   silent?: boolean;
 }): Promise<string> {
-  log(`启动 ${opts.role} agent… (${USE_SANDBOX ? "sandbox" : "host"})`);
-  appendFileSync(LOG_FILE, `\n${"─".repeat(60)}\n[${opts.role}] task:\n${opts.task}\n${"─".repeat(60)}\n`);
-
-  if (USE_SANDBOX) {
-    const result = await runAgentInSandbox({
-      role: opts.role,
-      task: opts.task,
-      projectRoot: PROJECT_ROOT,
-      readonly: opts.role === "cto",
-      snapshotId: snapshotIds[opts.role],
-    });
-    appendFileSync(LOG_FILE, result.stdout);
-    if (!opts.silent) process.stdout.write(result.stdout);
-    return result.stdout;
-  }
-
-  // ── 直接在宿主机运行（默认）──────────────────────────────────────────────
   return new Promise((resolve, reject) => {
     const args = [
       "--print",
@@ -134,6 +118,38 @@ async function runAgent(opts: {
   });
 }
 
+async function runAgent(opts: {
+  role: FallbackRole;
+  task: string;
+  scope?: string;
+  silent?: boolean;
+}): Promise<string> {
+  const scope = opts.scope ?? opts.role;
+  log(`启动 ${opts.role} agent… (${USE_SANDBOX ? "sandbox" : "host"})`);
+  appendFileSync(LOG_FILE, `\n${"─".repeat(60)}\n[${opts.role}] task:\n${opts.task}\n${"─".repeat(60)}\n`);
+
+  await recordRun({ role: opts.role, scope, kind: "task_input", content: opts.task });
+
+  let output: string;
+  if (USE_SANDBOX) {
+    const result = await runAgentInSandbox({
+      role: opts.role,
+      task: opts.task,
+      projectRoot: PROJECT_ROOT,
+      readonly: opts.role === "cto",
+      snapshotId: snapshotIds[opts.role],
+    });
+    appendFileSync(LOG_FILE, result.stdout);
+    if (!opts.silent) process.stdout.write(result.stdout);
+    output = result.stdout;
+  } else {
+    output = await runAgentOnHost({ role: opts.role, task: opts.task, silent: opts.silent });
+  }
+
+  await recordRun({ role: opts.role, scope, kind: "task_output", content: output });
+  return output;
+}
+
 // ── CTO 评审 ──────────────────────────────────────────────────────────────────
 
 type Stage = "pm" | "ui" | "frontend";
@@ -143,6 +159,7 @@ async function ctoReview(stage: Stage): Promise<"approved" | "rejected"> {
 
   const output = await runAgent({
     role: "cto",
+    scope: stage,
     task: `
 请评审 ${stage.toUpperCase()} 阶段的产出物。
 
@@ -250,6 +267,9 @@ async function main() {
   log("=== xs-code Orchestrator 启动 (Fallback 路径) ===");
   log(`最大重试次数：${MAX_RETRIES}`);
   log(`日志文件：${LOG_FILE}`);
+
+  // 初始化 db9（如果设置了 DB9_API_TOKEN）
+  await initDb9("xs-code");
 
   // Sandbox 模式下先执行 pre-flight 验证
   if (USE_SANDBOX) {

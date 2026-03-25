@@ -1,6 +1,7 @@
 {
   "name": "xs-code",
   "private": true,
+  "packageManager": "bun@1.3.10",
   "workspaces": ["apps/*", "packages/*"],
   "scripts": {
     "dev": "turbo dev --filter=@xs/website",

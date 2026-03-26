@@ -13,7 +13,7 @@
 import { spawn } from "child_process";
 import { appendFileSync, mkdirSync, readFileSync } from "fs";
 import { join } from "path";
-import { preflightAgent, runAgentInSandbox } from "./lib/sandbox";
+import { runAgentInSandbox } from "./lib/sandbox";
 import { initDb9, recordRun } from "./lib/db9";
 
 const USE_SANDBOX = process.env.USE_SANDBOX === "1";
@@ -36,50 +36,13 @@ function log(msg: string) {
 
 type FallbackRole = "pm" | "ui" | "frontend" | "cto";
 
-/** 角色 → snapshot ID 缓存（pre-flight 通过后存储） */
-const snapshotIds: Partial<Record<FallbackRole, string>> = {};
-
-/** 角色 → agents/ 工作组映射（与 sandbox.ts 保持一致） */
+/** 角色 → agents/ 工作组映射 */
 const ROLE_GROUP: Record<FallbackRole, string> = {
   pm: "product",
   ui: "product",
   frontend: "frontend",
   cto: "cto",
 };
-
-// ── Pre-flight 验证 ────────────────────────────────────────────────────────────
-
-/**
- * 并行验证所有 4 个 fallback 角色的沙箱，拍快照缓存。
- * 任一失败则中止，Jason 修复环境后重跑。
- */
-async function preflightAll(): Promise<void> {
-  log("=== Pre-flight：并行验证 4 个角色沙箱 ===");
-
-  const roles: FallbackRole[] = ["pm", "ui", "frontend", "cto"];
-  const results = await Promise.allSettled(
-    roles.map((role) => preflightAgent(role))
-  );
-
-  const failures: string[] = [];
-  for (const result of results) {
-    if (result.status === "fulfilled") {
-      const { role, snapshotId } = result.value;
-      snapshotIds[role] = snapshotId;
-      log(`✅ ${role} 就绪 (snapshotId: ${snapshotId})`);
-    } else {
-      failures.push(result.reason?.message ?? "未知错误");
-      log(`❌ pre-flight 失败: ${result.reason?.message}`);
-    }
-  }
-
-  if (failures.length > 0) {
-    log(`⛔ Pre-flight 未通过，请修复后重跑：\n${failures.join("\n")}`);
-    process.exit(1);
-  }
-
-  log("=== Pre-flight 通过，开始正式任务 ===");
-}
 
 // ── runAgent ──────────────────────────────────────────────────────────────────
 
@@ -157,7 +120,6 @@ async function runAgent(opts: {
       task: opts.task,
       projectRoot: PROJECT_ROOT,
       readonly: opts.role === "cto",
-      snapshotId: snapshotIds[opts.role],
     });
     appendFileSync(LOG_FILE, result.stdout);
     if (!opts.silent) process.stdout.write(result.stdout);
@@ -290,11 +252,6 @@ async function main() {
 
   // 初始化 db9（如果设置了 DB9_API_TOKEN）
   await initDb9("xs-code");
-
-  // Sandbox 模式下先执行 pre-flight 验证
-  if (USE_SANDBOX) {
-    await preflightAll();
-  }
 
   await runStage("pm");
   await runStage("ui");

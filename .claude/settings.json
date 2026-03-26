@@ -23,7 +23,8 @@
       "Bash(export BUN_INSTALL:*)",
       "Bash(export PATH:*)",
       "mcp__playwright__*",
-      "mcp__browsermcp__*"
+      "mcp__browsermcp__*",
+      "Bash(cat /Users/jasonge/Documents/GitHub/xs-code/.env.example)"  
     ]
   }
 }

@@ -5,7 +5,7 @@
  * 如果未设置 DB9_API_TOKEN，所有操作静默跳过，不影响主流程。
  *
  * 环境变量：
- *   DB9_API_TOKEN     — db9.ai API token（必须）
+ *   DB9_TOKEN         — db9.ai API token（必须）
  *   DB9_DATABASE_ID   — 已有数据库 ID（可选，设置后跳过创建步骤）
  */
 
@@ -15,9 +15,9 @@ let _client: Db9Client | null = null;
 let _dbId: string | null = null;
 
 function getClient(): Db9Client | null {
-  if (!process.env.DB9_API_TOKEN) return null;
+  if (!process.env.DB9_TOKEN) return null;
   if (!_client) {
-    _client = new Db9Client({ token: process.env.DB9_API_TOKEN });
+    _client = new Db9Client({ token: process.env.DB9_TOKEN });
   }
   return _client;
 }
@@ -32,7 +32,7 @@ function getClient(): Db9Client | null {
 export async function initDb9(projectName: string): Promise<string | null> {
   const client = getClient();
   if (!client) {
-    console.log("[db9] DB9_API_TOKEN 未设置，跳过 db9 初始化");
+    console.log("[db9] DB9_TOKEN 未设置，跳过 db9 初始化");
     return null;
   }
 

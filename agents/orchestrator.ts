@@ -11,7 +11,8 @@
  */
 
 import { spawn } from "child_process";
-import { appendFileSync, mkdirSync } from "fs";
+import { appendFileSync, mkdirSync, readFileSync } from "fs";
+import { join } from "path";
 import { preflightAgent, runAgentInSandbox } from "./lib/sandbox";
 import { initDb9, recordRun } from "./lib/db9";
 
@@ -37,6 +38,14 @@ type FallbackRole = "pm" | "ui" | "frontend" | "cto";
 
 /** 角色 → snapshot ID 缓存（pre-flight 通过后存储） */
 const snapshotIds: Partial<Record<FallbackRole, string>> = {};
+
+/** 角色 → agents/ 工作组映射（与 sandbox.ts 保持一致） */
+const ROLE_GROUP: Record<FallbackRole, string> = {
+  pm: "product",
+  ui: "product",
+  frontend: "frontend",
+  cto: "cto",
+};
 
 // ── Pre-flight 验证 ────────────────────────────────────────────────────────────
 
@@ -79,6 +88,16 @@ async function runAgentOnHost(opts: {
   task: string;
   silent?: boolean;
 }): Promise<string> {
+  // 加载角色 skill 文件作为 system prompt
+  const group = ROLE_GROUP[opts.role];
+  const skillPath = join(PROJECT_ROOT, `agents/${group}/skills/${opts.role}.md`);
+  let systemPrompt = "";
+  try {
+    systemPrompt = readFileSync(skillPath, "utf-8");
+  } catch {
+    log(`⚠️ 未找到 skill 文件：${skillPath}，agent 将无角色上下文`);
+  }
+
   return new Promise((resolve, reject) => {
     const args = [
       "--print",
@@ -86,6 +105,7 @@ async function runAgentOnHost(opts: {
       "bypassPermissions",
       "--allowedTools",
       "Read,Write,Edit,MultiEdit,Glob,Grep,Bash",
+      ...(systemPrompt ? ["--append-system-prompt", systemPrompt] : []),
     ];
 
     const child = spawn("claude", args, {

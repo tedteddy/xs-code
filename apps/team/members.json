@@ -16,5 +16,11 @@
     "role": "质量保障",
     "bio": "负责编写和运行自动化测试，确保功能稳定可靠。",
     "skills": ["Playwright", "自动化测试", "Bug 追踪"]
+  },
+  {
+    "name": "Jason",
+    "role": "技术负责人 (CTO)",
+    "bio": "15 年全栈工程经验，专精 Next.js 和 TypeScript，负责技术规范和架构决策。",
+    "skills": ["Next.js", "TypeScript", "Web 性能优化", "系统架构设计"]
   }
 ]

@@ -5,14 +5,14 @@
 
 ## 概述
 
-在 `apps/team/` 下新建一个纯 HTML/CSS/JS 的静态团队介绍页，无需构建工具，直接用浏览器打开即可使用。
+在 `apps/team/` 下新建一个纯 HTML/CSS/JS 的静态团队介绍页，无需构建工具。`apps/team` 是独立的内部工具，不与 `apps/website` 集成。
 
 ## 文件结构
 
 ```
 apps/team/
 ├── index.html        # 主页面，动态渲染成员卡片
-├── style.css         # 页面样式（简洁风格，支持亮色）
+├── style.css         # 页面样式
 ├── main.js           # fetch members.json，生成卡片 DOM
 └── members.json      # 成员数据源
 ```
@@ -63,7 +63,31 @@ apps/team/
 - 无框架、无构建工具
 - `fetch('./members.json')` 加载数据，动态生成 DOM
 - CSS Grid 实现响应式布局
-- 风格参考主站：大留白、简洁排版
+
+## 本地开发
+
+由于浏览器安全限制，`file://` 协议下 `fetch` 会失败，必须通过 HTTP 服务器运行：
+
+```bash
+cd apps/team
+python3 -m http.server 8000
+# 访问 http://localhost:8000
+```
+
+## 设计规范
+
+- 背景色：白色 `#ffffff`
+- 卡片背景：浅灰 `#f9fafb`
+- 主文字：深灰 `#111827`
+- 次要文字：中灰 `#6b7280`
+- 角色 badge：深色填充，白色文字
+- 技能 chip：浅色边框，小圆角
+- 卡片间距：`24px`，卡片内边距：`24px`，卡片圆角：`12px`
+
+## 错误处理
+
+- `fetch` 失败时，页面显示提示："无法加载成员数据，请确认通过 HTTP 服务器访问本页面。"
+- 控制台打印具体错误信息便于调试
 
 ## 不在范围内
 
@@ -71,3 +95,4 @@ apps/team/
 - 不需要联系方式、兴趣爱好、加入时间
 - 不需要连接数据库
 - 不需要路由或多页面
+- 不与 apps/website 集成

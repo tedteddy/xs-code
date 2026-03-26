@@ -232,21 +232,22 @@ export async function runAgentInSandbox(
 
   console.log(`[sandbox] 启动 ${opts.role} sandbox… (${opts.snapshotId ? "snapshot" : "fresh"})`);
 
+  // 基础 env + 角色专属 env（GitHub token、Linear key、git 身份等）
+  const sandboxEnv = {
+    ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY ?? "",
+    HOME: "/root",
+    ...config.env,
+  };
+
   // 从快照恢复（跳过依赖安装）或创建新 sandbox
   const sandbox = opts.snapshotId
     ? await provider.restore(opts.snapshotId, {
-        env: {
-          ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY ?? "",
-          HOME: "/root",
-        },
+        env: sandboxEnv,
         autoDestroyMinutes: Math.ceil(timeout / 60_000) + 5,
       })
     : await provider.create({
         image: config.image,
-        env: {
-          ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY ?? "",
-          HOME: "/root",
-        },
+        env: sandboxEnv,
         autoDestroyMinutes: Math.ceil(timeout / 60_000) + 5,
       });
 

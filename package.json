@@ -12,6 +12,7 @@
     "logs": "tail -f logs/$(ls -t logs/ | head -1)"
   },
   "devDependencies": {
+    "@types/node": "latest",
     "turbo": "latest",
     "@sandbank.dev/core": "latest",
     "@sandbank.dev/boxlite": "latest",

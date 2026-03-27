@@ -1,276 +1,242 @@
 /**
- * xs-code Dispatcher（Standby 路径）
+ * xs-code Orchestrator
  *
- * 保持 5 个 VM 常驻，通过 REPL 随时派发任务：
- *   pm: <任务描述>
- *   frontend: <任务描述>
- *   status
- *   exit
+ * 按需派发：接收任务和角色列表，spawn VM 执行，完成后销毁。
+ * 不常驻、不 REPL——由 Claude Code 主 agent 直接调用。
  *
- * 运行：bun run agents/dispatcher.ts
+ * CLI 用法：
+ *   bun run agents/dispatcher.ts --task "重建首页" --roles "pm,ui,frontend"
+ *   bun run agents/dispatcher.ts --task "审查架构" --roles "cto"
+ *
+ * 也可作为模块导入：
+ *   import { orchestrate } from './dispatcher'
  */
 
-import { createProvider, withStreaming } from "@sandbank.dev/core";
+import { createProvider, createSession, withStreaming } from "@sandbank.dev/core";
 import { BoxLiteAdapter } from "@sandbank.dev/boxlite";
 import { mkdirSync, appendFileSync } from "node:fs";
 import { join } from "node:path";
-import * as readline from "node:readline";
+import { execSync } from "node:child_process";
 import { sandboxConfigs } from "./sandbox.config";
 import { execAgentTask } from "./lib/sandbox";
 import { initDb9, recordRun } from "./lib/db9";
-import type { Sandbox, SandboxProvider } from "@sandbank.dev/core";
 
-type AgentRole = "pm" | "ui" | "frontend" | "cto" | "qa";
+export type AgentRole = "pm" | "ui" | "frontend" | "cto" | "qa";
 
 const ALL_ROLES: AgentRole[] = ["pm", "ui", "frontend", "cto", "qa"];
 const READONLY_ROLES = new Set<AgentRole>(["cto"]);
 
 const PROJECT_ROOT = process.cwd();
 const LOG_DIR = join(PROJECT_ROOT, "logs");
-const LOG_FILE = join(
-  LOG_DIR,
-  `dispatcher-${new Date().toISOString().replace(/[:.]/g, "-")}.log`
-);
-
 mkdirSync(LOG_DIR, { recursive: true });
 
 function log(msg: string) {
-  const line = `[dispatcher] ${new Date().toISOString()} ${msg}`;
+  const line = `[orchestrator] ${new Date().toISOString()} ${msg}`;
   console.log(line);
-  appendFileSync(LOG_FILE, line + "\n");
+  appendFileSync(
+    join(LOG_DIR, `orchestrator-${new Date().toISOString().slice(0, 10)}.log`),
+    line + "\n"
+  );
 }
 
-// ── VM 状态 ────────────────────────────────────────────────────────────────
-
-interface VMState {
-  sandbox: Sandbox;
-  status: "spawning" | "idle" | "busy" | "error";
-  taskCount: number;
-  currentTask?: string;
-  lastError?: string;
-  /** 当前任务链（用于串行化同角色任务） */
-  pendingTask?: Promise<void>;
-}
-
-const vms = new Map<AgentRole, VMState>();
-
-// ── 启动所有 VM ────────────────────────────────────────────────────────────
-
-async function spawnAll(provider: SandboxProvider): Promise<void> {
-  log("启动所有角色 VM…");
-
-  const promises = ALL_ROLES.map(async (role) => {
-    const config = sandboxConfigs[role];
-    log(`[${role}] 创建 sandbox…`);
-
-    try {
-      const sandbox = await provider.create({
-        image: config.image,
-        env: {
-          ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY ?? "",
-          HOME: "/root",
-          ...config.env,
-        },
-        // 不设 autoDestroyMinutes，保持常驻
-      });
-
-      const state: VMState = { sandbox, status: "spawning", taskCount: 0 };
-      vms.set(role, state);
-
-      // 执行安装依赖命令
-      for (const cmd of config.setup ?? []) {
-        log(`[${role}] setup: ${cmd}`);
-        const s = withStreaming(sandbox);
-        if (s) {
-          const stream = await s.execStream(cmd, { cwd: "/workspace" });
-          const reader = stream.getReader();
-          const decoder = new TextDecoder();
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            process.stdout.write(decoder.decode(value, { stream: true }));
-          }
-        } else {
-          const result = await sandbox.exec(cmd, { cwd: "/workspace" });
-          process.stdout.write(result.stdout);
-        }
-      }
-
-      state.status = "idle";
-      log(`[${role}] ✅ 就绪`);
-    } catch (err) {
-      log(`[${role}] ❌ 启动失败: ${err}`);
-      const existing = vms.get(role);
-      if (existing) {
-        existing.status = "error";
-        existing.lastError = String(err);
-      }
-    }
-  });
-
-  await Promise.all(promises);
-  log("所有 VM 启动完成");
-}
-
-// ── 派发任务 ───────────────────────────────────────────────────────────────
-
-function dispatch(role: AgentRole, task: string): void {
-  const state = vms.get(role);
-  if (!state) {
-    console.log(`❌ 角色 ${role} 的 VM 未初始化`);
-    return;
+/**
+ * 清理上次崩溃遗留的 boxlite-bridge Python 进程。
+ * 这些进程会持有 ~/.boxlite/.lock，导致新 runtime 无法获取锁。
+ */
+function cleanupStaleBridges() {
+  try {
+    execSync("pkill -f 'boxlite-bridge'", { stdio: "ignore" });
+    // 等待 OS 释放 flock
+    Bun.sleepSync(300);
+  } catch {
+    // pkill 找不到进程时返回 1，属正常情况，忽略
   }
-  if (state.status === "spawning") {
-    console.log(`⏳ ${role} VM 仍在启动中，请稍后再试`);
-    return;
-  }
-  if (state.status === "error") {
-    console.log(`❌ ${role} VM 处于错误状态：${state.lastError}`);
-    return;
-  }
-
-  const run = async () => {
-    state.status = "busy";
-    state.currentTask = task;
-    state.taskCount++;
-    log(`[${role}] 开始任务 #${state.taskCount}: ${task.slice(0, 80)}`);
-
-    await recordRun({ role, scope: role, kind: "task_input", content: task });
-
-    try {
-      const output = await execAgentTask({
-        role,
-        task,
-        projectRoot: PROJECT_ROOT,
-        sandbox: state.sandbox,
-        readonly: READONLY_ROLES.has(role),
-        onChunk: (text) => process.stdout.write(text),
-      });
-
-      await recordRun({ role, scope: role, kind: "task_output", content: output });
-      log(`[${role}] ✅ 任务 #${state.taskCount} 完成`);
-    } catch (err) {
-      log(`[${role}] ❌ 任务失败: ${err}`);
-      state.lastError = String(err);
-    } finally {
-      state.status = "idle";
-      state.currentTask = undefined;
-    }
-  };
-
-  // 同角色串行，跨角色并行
-  state.pendingTask = (state.pendingTask ?? Promise.resolve()).then(run);
-  console.log(`✉️  已派发 ${role} 任务（队列中）`);
 }
 
-// ── 状态展示 ───────────────────────────────────────────────────────────────
-
-function showStatus(): void {
-  console.log("\n── VM 状态 ────────────────────────────────────");
-  for (const role of ALL_ROLES) {
-    const state = vms.get(role);
-    if (!state) {
-      console.log(`  ${role.padEnd(10)} ⚪ 未初始化`);
-      continue;
-    }
-    const icon = { spawning: "⏳", idle: "✅", busy: "🔄", error: "❌" }[state.status];
-    const detail =
-      state.status === "busy" ? ` — ${state.currentTask?.slice(0, 50)}…` : "";
-    const errInfo = state.status === "error" ? ` — ${state.lastError}` : "";
-    console.log(
-      `  ${role.padEnd(10)} ${icon} ${state.status}${detail}${errInfo}  (任务数: ${state.taskCount})`
-    );
-  }
-  console.log("────────────────────────────────────────────────\n");
-}
-
-// ── REPL ───────────────────────────────────────────────────────────────────
-
-async function startREPL(provider: SandboxProvider): Promise<void> {
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-    prompt: "xs> ",
-  });
-
-  console.log("\n=== xs-code Dispatcher ===");
-  console.log("命令格式：<角色>: <任务>  |  status  |  exit");
-  console.log(`角色列表：${ALL_ROLES.join(", ")}\n`);
-
-  rl.prompt();
-
-  rl.on("line", (line) => {
-    const trimmed = line.trim();
-
-    if (trimmed === "exit" || trimmed === "quit") {
-      rl.close();
-      return;
-    }
-
-    if (trimmed === "status") {
-      showStatus();
-      rl.prompt();
-      return;
-    }
-
-    const match = trimmed.match(/^(\w+):\s*(.+)$/s);
-    if (!match) {
-      console.log('格式错误，请使用 "<角色>: <任务>" 或 "status" / "exit"');
-      rl.prompt();
-      return;
-    }
-
-    const [, roleStr, task] = match;
-    const role = roleStr as AgentRole;
-
-    if (!ALL_ROLES.includes(role)) {
-      console.log(`未知角色 "${role}"，可用角色：${ALL_ROLES.join(", ")}`);
-      rl.prompt();
-      return;
-    }
-
-    dispatch(role, task.trim());
-    rl.prompt();
-  });
-
-  rl.on("close", async () => {
-    log("用户退出 REPL，销毁所有 VM…");
-    const destroyAll = [...vms.values()].map((s) =>
-      provider.destroy(s.sandbox.id).catch(() => {})
-    );
-    await Promise.all(destroyAll);
-    log("所有 VM 已销毁");
-    process.exit(0);
-  });
-}
-
-// ── 主程序 ─────────────────────────────────────────────────────────────────
-
-async function main() {
-  log("=== xs-code Dispatcher 启动 ===");
-  log(`日志文件：${LOG_FILE}`);
-
-  await initDb9("xs-code");
-
-  const provider = process.env.BOXRUN_API_URL
-    ? createProvider(
-        new BoxLiteAdapter({
+function createSandboxProvider() {
+  return createProvider(
+    process.env.BOXRUN_API_URL
+      ? new BoxLiteAdapter({
           apiUrl: process.env.BOXRUN_API_URL,
           apiToken: process.env.BOXRUN_API_TOKEN,
         })
-      )
-    : createProvider(
-        new BoxLiteAdapter({
+      : new BoxLiteAdapter({
           mode: "local",
           boxliteHome: process.env.BOXLITE_HOME ?? `${process.env.HOME}/.boxlite`,
+          pythonPath:
+            process.env.BOXLITE_PYTHON ??
+            `${process.env.HOME}/.boxlite-venv/bin/python3`,
         })
-      );
-
-  await spawnAll(provider);
-  await startREPL(provider);
+  );
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+export interface OrchestrateResult {
+  role: AgentRole;
+  output: string;
+  success: boolean;
+  error?: string;
+}
+
+/**
+ * 按需 orchestrate：spawn 指定角色的 VM，并行执行任务，完成后全部销毁。
+ */
+export async function orchestrate(
+  task: string,
+  roles: AgentRole[] = ALL_ROLES
+): Promise<OrchestrateResult[]> {
+  log(`=== 开始 orchestrate | 任务: ${task.slice(0, 80)} | 角色: ${roles.join(",")} ===`);
+
+  // 清理上次可能残留的 bridge 进程，释放 ~/.boxlite/.lock
+  cleanupStaleBridges();
+
+  await initDb9("xs-code");
+
+  const provider = createSandboxProvider();
+  const session = await createSession({
+    provider,
+    relay: { type: "memory" },
+    timeoutMinutes: 60,
+  });
+
+  log(`Session 已创建: ${session.id}`);
+
+  // 顺序 spawn VM（BoxLite 本地模式每次只允许一个 runtime 锁定 ~/.boxlite）
+  type SpawnedVM = { role: AgentRole; sandbox: Awaited<ReturnType<typeof session.spawn>> };
+  const spawnedVMs: SpawnedVM[] = [];
+  const spawnErrors: OrchestrateResult[] = [];
+
+  for (const role of roles) {
+    const config = sandboxConfigs[role];
+    log(`[${role}] spawn VM…`);
+    try {
+      // rootfsPath（绝对路径）由 BoxLite adapter 自动识别为本地 OCI layout
+      const sandbox = await session.spawn(role, {
+        image: config.rootfsPath ?? config.image ?? "",
+        env: {
+          ANTHROPIC_AUTH_TOKEN: process.env.ANTHROPIC_AUTH_TOKEN ?? process.env.ANTHROPIC_API_KEY ?? "",
+          ANTHROPIC_BASE_URL: process.env.ANTHROPIC_BASE_URL ?? "",
+          HOME: "/root",
+          ...config.env,
+        },
+      });
+      log(`[${role}] VM 已就绪`);
+      spawnedVMs.push({ role, sandbox });
+    } catch (err) {
+      const error = String(err);
+      log(`[${role}] ❌ spawn 失败: ${error}`);
+      spawnErrors.push({ role, output: "", success: false, error });
+    }
+  }
+
+  // 并行执行任务（各 VM 相互独立，无 runtime 冲突）
+  const taskResults = await Promise.all(
+    spawnedVMs.map(async ({ role, sandbox }): Promise<OrchestrateResult> => {
+      const config = sandboxConfigs[role];
+      try {
+        // 安装依赖（自定义镜像已预装，此处通常为空）
+        for (const cmd of config.setup ?? []) {
+          log(`[${role}] setup: ${cmd}`);
+          const s = withStreaming(sandbox);
+          if (s) {
+            const stream = await s.execStream(cmd, { cwd: "/workspace" });
+            const reader = stream.getReader();
+            const decoder = new TextDecoder();
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              process.stdout.write(decoder.decode(value, { stream: true }));
+            }
+          } else {
+            const result = await sandbox.exec(cmd, { cwd: "/workspace" });
+            if (result.stdout) process.stdout.write(result.stdout);
+          }
+        }
+
+        log(`[${role}] 开始执行任务…`);
+        await recordRun({ role, scope: role, kind: "task_input", content: task });
+
+        const output = await execAgentTask({
+          role,
+          task,
+          projectRoot: PROJECT_ROOT,
+          sandbox,
+          readonly: READONLY_ROLES.has(role),
+          onChunk: (text) => process.stdout.write(text),
+        });
+
+        await recordRun({ role, scope: role, kind: "task_output", content: output });
+        log(`[${role}] ✅ 完成`);
+
+        return { role, output, success: true };
+      } catch (err) {
+        const error = String(err);
+        log(`[${role}] ❌ 失败: ${error}`);
+        await recordRun({ role, scope: role, kind: "task_output", content: `ERROR: ${error}` });
+        return { role, output: "", success: false, error };
+      }
+    })
+  );
+
+  const results = [...spawnErrors, ...taskResults];
+
+  // 关闭 session，销毁所有 VM
+  log("关闭 session，销毁所有 VM…");
+  await session.close();
+  log("=== orchestrate 完成 ===");
+
+  return results;
+}
+
+// ── CLI 入口 ───────────────────────────────────────────────────────────────
+
+if (import.meta.main) {
+  const args = process.argv.slice(2);
+  const taskIdx = args.indexOf("--task");
+  const rolesIdx = args.indexOf("--roles");
+
+  if (taskIdx === -1 || !args[taskIdx + 1]) {
+    console.error("用法: bun run agents/dispatcher.ts --task <任务> [--roles <role1,role2,...>]");
+    console.error(`可用角色: ${ALL_ROLES.join(", ")}`);
+    process.exit(1);
+  }
+
+  const task = args[taskIdx + 1];
+  const rolesRaw = rolesIdx !== -1 ? args[rolesIdx + 1] : null;
+  const roles = rolesRaw
+    ? (rolesRaw.split(",").map((r) => r.trim()) as AgentRole[])
+    : ALL_ROLES;
+
+  // 验证角色
+  const invalid = roles.filter((r) => !ALL_ROLES.includes(r));
+  if (invalid.length > 0) {
+    console.error(`未知角色: ${invalid.join(", ")}。可用角色: ${ALL_ROLES.join(", ")}`);
+    process.exit(1);
+  }
+
+  orchestrate(task, roles)
+    .then((results) => {
+      console.log("\n═══════════════════════════════════════════════════════");
+      console.log("  Agent 执行结果汇总");
+      console.log("═══════════════════════════════════════════════════════");
+      for (const r of results) {
+        const icon = r.success ? "✅" : "❌";
+        console.log(`\n${icon} [${r.role}]`);
+        console.log("───────────────────────────────────────────────────────");
+        if (r.success) {
+          // 打印完整输出，最多 2000 字符
+          const preview = r.output.length > 2000
+            ? r.output.slice(0, 2000) + `\n…（已截断，共 ${r.output.length} 字符）`
+            : r.output;
+          console.log(preview || "(无输出)");
+        } else {
+          console.log(`失败原因: ${r.error}`);
+        }
+      }
+      console.log("\n═══════════════════════════════════════════════════════\n");
+      process.exit(0);
+    })
+    .catch((err) => {
+      console.error("Orchestrator 异常:", err);
+      process.exit(1);
+    });
+}

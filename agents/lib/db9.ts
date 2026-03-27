@@ -77,11 +77,21 @@ export async function recordRun(opts: {
   const client = getClient();
   if (!client || !_dbId) return;
 
+  // memory 表的 kind 只允许 'fact' | 'decision' | 'question' | 'blocker'
+  // 将自定义 kind 映射到合法值，原始类型附在 content 开头
+  const kindMap: Record<string, string> = {
+    task_input: "fact",
+    task_output: "fact",
+    review_result: "decision",
+  };
+  const dbKind = kindMap[opts.kind] ?? "fact";
+  const content = `[${opts.kind}]\n${opts.content}`;
+
   try {
     await client.executeSQL(
       _dbId,
       `INSERT INTO memory (agent, scope, kind, content)
-       VALUES ('${escape(opts.role)}', '${escape(opts.scope)}', '${escape(opts.kind)}', '${escape(opts.content)}')`
+       VALUES ('${escape(opts.role)}', '${escape(opts.scope)}', '${escape(dbKind)}', '${escape(content)}')`
     );
   } catch (err) {
     // 记录失败不中断主流程

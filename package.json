@@ -9,7 +9,7 @@
     "lint": "turbo lint",
     "typecheck": "turbo typecheck",
     "orchestrate": "bun run agents/orchestrator.ts",
-    "dispatch": "bun run agents/dispatcher.ts",
+    "dispatch": "bun run agents/dispatcher.ts --task",
     "logs": "tail -f logs/$(ls -t logs/ | head -1)"
   },
   "devDependencies": {

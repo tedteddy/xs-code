@@ -75,6 +75,7 @@ export function createSandbankProvider(): SandboxProvider {
     new BoxLiteAdapter({
       mode: "local",
       boxliteHome: process.env.BOXLITE_HOME ?? `${process.env.HOME}/.boxlite`,
+      pythonPath: process.env.BOXLITE_PYTHON ?? `${process.env.HOME}/.boxlite-venv/bin/python3`,
     })
   );
 }
@@ -102,11 +103,33 @@ export function packProject(projectRoot: string): Uint8Array {
 
   const targets = candidates.filter((p) => existsSync(join(projectRoot, p)));
 
-  const buffer = execFileSync("tar", ["-czf", "-", ...targets], {
-    cwd: projectRoot,
-    maxBuffer: 100 * 1024 * 1024,
-  });
-  return new Uint8Array(buffer);
+  // 写到临时文件避免 stdout 缓冲区溢出（ENOBUFS）
+  const tmpFile = join("/tmp", `sandbank-pack-${Date.now()}.tar.gz`);
+  try {
+    execFileSync(
+      "tar",
+      [
+        "-czf",
+        tmpFile,
+        "--exclude=*/node_modules",
+        "--exclude=*/.next",
+        "--exclude=*/dist",
+        "--exclude=*/build",
+        "--exclude=*/.turbo",
+        "--exclude=*/.cache",
+        ...targets,
+      ],
+      { cwd: projectRoot }
+    );
+    const buffer = readFileSync(tmpFile);
+    return new Uint8Array(buffer);
+  } finally {
+    try {
+      unlinkSync(tmpFile);
+    } catch {
+      // 忽略清理错误
+    }
+  }
 }
 
 /** 将 sandbox 中 /workspace 的修改解压回本地 */
@@ -176,6 +199,11 @@ export async function execAgentTask(
 
   await sandbox.writeFile("/tmp/system-prompt.txt", systemPrompt);
   await sandbox.writeFile("/tmp/task.txt", opts.task);
+  // 将认证信息写入 sandbox（优先 ANTHROPIC_AUTH_TOKEN，回退到 ANTHROPIC_API_KEY）
+  const authToken = process.env.ANTHROPIC_AUTH_TOKEN ?? process.env.ANTHROPIC_API_KEY ?? "";
+  const baseUrl = process.env.ANTHROPIC_BASE_URL ?? "";
+  await sandbox.writeFile("/tmp/api-key", authToken);
+  await sandbox.writeFile("/tmp/api-base-url", baseUrl);
 
   // QA 角色：启动 dev server 并暴露端口
   let testBaseUrl = "";
@@ -194,9 +222,9 @@ export async function execAgentTask(
   const qaEnv = testBaseUrl ? `TEST_BASE_URL="${testBaseUrl}" ` : "";
   const claudeCmd = [
     `cat /tmp/task.txt |`,
-    `${qaEnv}claude --print`,
+    `${qaEnv}ANTHROPIC_AUTH_TOKEN=$(cat /tmp/api-key) ANTHROPIC_BASE_URL=$(cat /tmp/api-base-url) claude --print --model claude-haiku-4-5-20251001`,
     `--append-system-prompt "$(cat /tmp/system-prompt.txt)"`,
-    `--permission-mode bypassPermissions`,
+    `--permission-mode acceptEdits`,
     `--allowedTools Read,Write,Edit,MultiEdit,Glob,Grep,Bash`,
   ].join(" ");
 
@@ -249,7 +277,8 @@ export async function runAgentInSandbox(
   const sandbox = await provider.create({
     image: config.image,
     env: {
-      ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY ?? "",
+      ANTHROPIC_AUTH_TOKEN: process.env.ANTHROPIC_AUTH_TOKEN ?? process.env.ANTHROPIC_API_KEY ?? "",
+      ANTHROPIC_BASE_URL: process.env.ANTHROPIC_BASE_URL ?? "",
       HOME: "/root",
       ...config.env,
     },
@@ -306,7 +335,11 @@ export async function preflightAgent(role: AgentRole): Promise<PreflightResult> 
   console.log(`[preflight] 验证 ${role} sandbox…`);
   const sandbox = await provider.create({
     image: config.image,
-    env: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY ?? "", HOME: "/root" },
+    env: {
+      ANTHROPIC_AUTH_TOKEN: process.env.ANTHROPIC_AUTH_TOKEN ?? process.env.ANTHROPIC_API_KEY ?? "",
+      ANTHROPIC_BASE_URL: process.env.ANTHROPIC_BASE_URL ?? "",
+      HOME: "/root",
+    },
     autoDestroyMinutes: 15,
   });
 

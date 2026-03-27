@@ -1,24 +1,18 @@
 /**
  * 各 agent 角色的沙箱配置
- * OCI 镜像兼容 BoxLite（本地 microVM）和 Docker Hub
+ * 优先使用本地 OCI layout（~/.boxlite-images/），无需 registry
  */
 
 export interface SandboxConfig {
-  image: string;
+  /** OCI layout 本地路径（优先），BoxLite 直接加载，无需联网 */
+  rootfsPath?: string;
+  /** 回退用 registry image（需 HTTPS registry） */
+  image?: string;
   /** 需要预装的命令 */
   setup?: string[];
   /** 额外环境变量（会合并进 sandbox 创建参数） */
   env?: Record<string, string>;
 }
-
-/** Debian/Ubuntu 系镜像安装 GitHub CLI + git */
-const INSTALL_GH =
-  "apt-get update -qq && apt-get install -y -qq curl git && " +
-  "curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg && " +
-  'echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null && ' +
-  "apt-get update -qq && apt-get install -y -qq gh";
-
-const INSTALL_CLAUDE = "npm install -g @anthropic-ai/claude-code --silent";
 
 /**
  * 读取角色对应的 env 变量，注入进 sandbox。
@@ -41,35 +35,34 @@ function agentEnv(role: string): Record<string, string> {
   };
 }
 
+/** 本地 OCI layout 目录（由 skopeo 从 Docker 导出） */
+const IMAGES_DIR =
+  process.env.BOXLITE_IMAGES_DIR ?? `${process.env.HOME}/.boxlite-images`;
+
 export const sandboxConfigs: Record<string, SandboxConfig> = {
   pm: {
-    image: "node:22-slim",
-    setup: [INSTALL_GH, INSTALL_CLAUDE],
+    rootfsPath: `${IMAGES_DIR}/xs-code-agent`,
     env: agentEnv("pm"),
   },
 
   ui: {
-    image: "node:22-slim",
-    setup: [INSTALL_GH, INSTALL_CLAUDE],
+    rootfsPath: `${IMAGES_DIR}/xs-code-agent`,
     env: agentEnv("ui"),
   },
 
   frontend: {
-    image: "oven/bun:1",
-    setup: [INSTALL_GH, INSTALL_CLAUDE],
+    rootfsPath: `${IMAGES_DIR}/xs-code-agent`,
     env: agentEnv("frontend"),
   },
 
   cto: {
-    image: "node:22-slim",
-    setup: [INSTALL_GH, INSTALL_CLAUDE],
+    rootfsPath: `${IMAGES_DIR}/xs-code-agent`,
     env: agentEnv("cto"),
   },
 
   qa: {
-    // Playwright 官方镜像，已含 Chromium/Firefox/WebKit
-    image: "mcr.microsoft.com/playwright:v1.50.0-noble",
-    setup: [INSTALL_GH, INSTALL_CLAUDE],
+    // 预装了 Playwright + gh + claude-code
+    rootfsPath: `${IMAGES_DIR}/xs-code-agent-qa`,
     env: agentEnv("qa"),
   },
 };
